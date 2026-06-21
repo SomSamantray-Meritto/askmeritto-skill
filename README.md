@@ -113,17 +113,25 @@ sources to reach for.
   module name ("AI" → "Mio AI") before fetching
 - **M5 pricing / sales** → points to meritto.com, skips the KB walk
 
-**STEP 3 - Multi-Hub KB Sweep (the exhaustive search).** Google does not index the Meritto KB, so the
-skill never relies on web search to find articles. Instead it walks the KB live:
-- **Pass 1** fetches the hub(s) most directly matched to the query type.
-- **Pass 2** then fetches **every remaining KB hub** - Getting Started, Product Guide, How-To's, FAQs,
-  Business Cases, Newsletters - because the full answer to a single question is often spread across them
-  (setup context in Getting Started, steps in How-To's, depth in Product Guide, gotchas in FAQs, recent
-  changes in Newsletters).
-- All candidate article links from all hubs are pooled and **ranked together** by relevance. Only the top
-  articles are actually opened (budget: at most 8 fetched, trimmed to about 6 strong ones for the answer).
-  The ranking keeps token cost bounded while guaranteeing breadth.
-- If a hub fails, it is skipped silently; the sweep does not abort.
+**STEP 3 - Sub-Category Sweep with a parallel Haiku research fan-out (the exhaustive search).** Google
+does not index the Meritto KB, so the skill walks it live. Critically, the KB is **three levels deep** -
+a hub page (e.g. Product Guide) lists ~26 **sub-categories** (Leads, Webhook, Automations, MIO AI, ...)
+and *no articles*; the real articles live one level down inside each sub-category; articles then
+cross-link to each other. A hub page alone will make you wrongly conclude a feature does not exist (this
+is exactly how "Smart Capture", which lives under Product Guide -> Leads, was missed).
+- **Phase A** - fetch the relevant hub(s) and treat the result as a *sub-category index*, not an article
+  list.
+- **Phase B** - dispatch **5-6 Haiku subagents in parallel** (`meritto-researcher`), partitioning all the
+  sub-categories among them. Each worker opens its sub-categories, lists every article, deep-reads the
+  query-relevant ones, follows cross-links, and returns a structured **linkage map** (articles, key
+  terms, cross-document mentions). Coverage is exhaustive because sub-category names do not reliably
+  reveal where a feature lives.
+- **Phase C** - the main model merges all linkage maps into one network, dedupes, ranks, and fills any
+  reported gap with a follow-up worker.
+- **Phase D** - hands the strongest articles to synthesis. On runtimes that cannot spawn subagents, the
+  same sweep runs sequentially instead.
+Budgets keep it bounded: sub-category *listing* is exhaustive (cheap), but article *body* reads are
+ranked and capped (~3 per worker, ~8 merged).
 
 **STEP 3F - Feature traversal** (for `FEATURE_EXPLAIN`). Seeds from the ranked sweep, then follows the
 inline cross-links inside articles via a bounded breadth-first search (at most 6 articles, depth at most
@@ -205,10 +213,15 @@ This is the home format. Copy the folder into your skills directory:
 ```bash
 mkdir -p ~/.claude/skills/askmeritto
 cp -r askmeritto-skill/* ~/.claude/skills/askmeritto/
+# the parallel Haiku research worker must live where Claude Code discovers subagents:
+mkdir -p ~/.claude/agents
+cp askmeritto-skill/agents/meritto-researcher.md ~/.claude/agents/
 ```
 
-The skill is `user-invocable`, so it is immediately available as `/askmeritto <question>`. To wire the
-`/askmeritto` slash command and the optional yt-dlp SessionStart hook, also add a command file at
+The skill is `user-invocable`, so it is immediately available as `/askmeritto <question>`. The
+`meritto-researcher` agent (copied above) is what STEP 3 fans out 5-6 of in parallel on Haiku - without it
+in `~/.claude/agents/`, the skill falls back to a slower sequential sweep. To wire the `/askmeritto` slash
+command and the optional yt-dlp SessionStart hook, also add a command file at
 `~/.claude/commands/askmeritto.md` that invokes the skill, and register
 `hooks/scripts/check-config.sh` as a `SessionStart` hook in `~/.claude/settings.json`.
 
@@ -338,6 +351,8 @@ askmeritto-skill/
 ├── SKILL.md                      the brain - the full instruction contract the agent follows
 ├── README.md                     this file
 ├── .claude-plugin/plugin.json    plugin metadata (name, version, description)
+├── agents/
+│   └── meritto-researcher.md     Haiku KB research worker (5-6 spawned in parallel for the sweep)
 ├── scripts/
 │   └── meritto_fetch.py          youtube | linkedin | setup  (the only code; everything else is fetch/MCP)
 ├── references/

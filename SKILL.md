@@ -3,7 +3,7 @@ name: askmeritto
 version: "1.0.0"
 description: "Ask anything about Meritto: product, features, guides, how-tos, releases, security, developer APIs, Mio AI, and company news. Answers come only from Meritto's own public sources. Off-topic questions are politely declined."
 argument-hint: 'askmeritto how do I set up lead allocation | askmeritto what is Mio AI Voice | askmeritto how does the Create Lead API work | askmeritto what is new this month'
-allowed-tools: Bash, Read, Write, WebFetch, WebSearch, AskUserQuestion
+allowed-tools: Bash, Read, Write, WebFetch, WebSearch, AskUserQuestion, Task
 homepage: https://www.meritto.com
 license: Proprietary
 user-invocable: true
@@ -33,12 +33,12 @@ Guard and STEP 2 Trap check) pass.
 
 | # | Source | Where | How to read it |
 |---|--------|-------|----------------|
-| 1 | Getting Started (KB) | help.meritto.com/portal/en/kb/getting-started | WebFetch hub → article |
-| 2 | Product Guide (KB) | help.meritto.com/portal/en/kb/product-guide | WebFetch hub → article |
-| 3 | How-To's (KB) | help.meritto.com/portal/en/kb/how-to-s | WebFetch hub → article |
-| 4 | Business Cases (KB) | help.meritto.com/portal/en/kb/solutioning-business-cases | WebFetch hub → article |
-| 5 | FAQs/Troubleshooting (KB) | help.meritto.com/portal/en/kb/faqs-troubleshooting | WebFetch hub → article |
-| 6 | Product Newsletters (KB) | help.meritto.com/portal/en/kb/product-newsletters | WebFetch hub → article |
+| 1 | Getting Started (KB) | help.meritto.com/portal/en/kb/getting-started | WebFetch hub → sub-category → article |
+| 2 | Product Guide (KB) | help.meritto.com/portal/en/kb/product-guide | WebFetch hub → sub-category → article |
+| 3 | How-To's (KB) | help.meritto.com/portal/en/kb/how-to-s | WebFetch hub → sub-category → article |
+| 4 | Business Cases (KB) | help.meritto.com/portal/en/kb/solutioning-business-cases | WebFetch hub → sub-category → article |
+| 5 | FAQs/Troubleshooting (KB) | help.meritto.com/portal/en/kb/faqs-troubleshooting | WebFetch hub → sub-category → article |
+| 6 | Product Newsletters (KB) | help.meritto.com/portal/en/kb/product-newsletters | WebFetch hub → sub-category → article |
 | 7 | Security | https://www.meritto.com/security/ | WebFetch direct |
 | 8 | YouTube | https://www.youtube.com/@merittoofficial | `scripts/meritto_fetch.py youtube` (yt-dlp) |
 | 9 | LinkedIn | https://www.linkedin.com/company/meritto/posts/ | `scripts/meritto_fetch.py linkedin` (opt-in) else WebSearch |
@@ -102,16 +102,17 @@ Pick one:
 
 **Disambiguation:** questions about webhooks, connectors, automations, or integration *concepts*
 ("types of webhook triggers", "how do automations work") are `FEATURE_EXPLAIN`. Reserve `DEVELOPER_API`
-for explicit endpoint / curl / parameter questions. Note that `DEVELOPER_API` ALSO runs the Core Sweep
-(below), so KB how-tos are never lost either way.
+for explicit endpoint / curl / parameter questions. Note that `DEVELOPER_API` ALSO runs the Sub-Category
+Sweep (STEP 3), so KB how-tos are never lost either way.
 
-**THE CORE SWEEP RULE (read before the table).** For every query type EXCEPT `RELEASE_NEWS`,
+**THE SWEEP RULE (read before the table).** For every query type EXCEPT `RELEASE_NEWS`,
 `FAQ_TROUBLESHOOT`, `SECURITY`, `BUSINESS_CASE`, and `COMPANY_NEWS`, STEP 3 ALWAYS sweeps three KB hubs —
-**Product Guide, Getting Started, and How-To's** — regardless of the table below. The table's hub column
-only decides which of the three ranks **highest**; it never limits which hubs are fetched. The five listed
-types instead use their single home hub (no Core Sweep).
+**Product Guide, Getting Started, and How-To's** — and fans out parallel Haiku workers to open their
+sub-categories (STEP 3, Phase B). The table's hub column only decides which of the three ranks
+**highest**; it never limits which hubs are fetched. The five listed types instead use their single home
+hub, but still expand its sub-categories (never stop at a hub page).
 
-| Query type | Core 3-hub sweep? | Top-ranked hub (ranking bias only) | Plus dedicated / supplementary |
+| Query type | Full 3-hub sweep? | Top-ranked hub (ranking bias only) | Plus dedicated / supplementary |
 |------------|-------------------|------------------------------------|-------------------------------|
 | ORIENTATION | YES | getting-started | getmio.ai for the AI pillar; marketing only if KB insufficient |
 | GETTING_STARTED | YES | getting-started | YouTube |
@@ -147,62 +148,96 @@ M3 / M4 → clarify or normalize first. M2 / M5 → reroute the answer source. O
 
 ---
 
-## STEP 3 — Source / Link Resolution: the Core Sweep
+## STEP 3 — Source / Link Resolution: the Sub-Category Sweep
 
 Google does NOT index the Meritto KB. Do NOT rely on WebSearch to find KB articles. Resolve by walking
 the KB live.
 
-**HARD RULE.** Unless the query is `RELEASE_NEWS`, `FAQ_TROUBLESHOOT`, `SECURITY`, `BUSINESS_CASE`, or
-`COMPANY_NEWS`, you MUST WebFetch all THREE Core-Sweep hubs below **before** you rank or fetch any
-article. Fetching only Product Guide and stopping is the single most common failure of this skill — do
-NOT do it. Track the three as a checklist and tick each one.
+### The KB is THREE levels deep — never stop at level 1
 
-### The Core Sweep (all other query types)
+1. **Hub** (`…/kb/product-guide`) lists ~26 **sub-categories** (Leads, Opportunities, Webhook,
+   Automations, Connectors, MIO AI, FormDesk, Webforms, …) and **NO articles**.
+2. **Sub-category** (`…/kb/product-guide/leads`) lists the actual **articles**.
+3. **Article** (`…/kb/articles/{slug}`) holds the content + cross-links to related articles.
 
-WebFetch all three of these hubs, every time:
+> ⛔ **ANTI-PATTERN — the single most important rule in this step.** A hub page lists CATEGORIES, not
+> articles. **NEVER conclude a feature does not exist from hub pages alone.** You MUST open the relevant
+> sub-category pages first.
+> Worked example: "Smart Capture" is NOT on the Product Guide hub. It lives at
+> `…/kb/product-guide` → sub-category `…/kb/product-guide/leads` → article
+> `…/kb/articles/smart-capture-update-faster-work-smarter`. The name "Leads" does not telegraph that
+> Smart Capture is inside it — which is exactly why sub-category names are NOT trustworthy filters and
+> coverage must be EXHAUSTIVE.
 
+### Phase A — Hubs (sub-category index)
+
+WebFetch the relevant hub(s). For the full sweep (all query types except the five single-home types
+below) that is all three:
 1. `https://help.meritto.com/portal/en/kb/product-guide`
 2. `https://help.meritto.com/portal/en/kb/getting-started`
 3. `https://help.meritto.com/portal/en/kb/how-to-s`
 
-Then:
-- Collect ALL candidate article URLs from all three hubs into one unified pool.
-- Rank the whole pool by relevance to the question (title + snippet match), biasing toward the
-  query-type's top-ranked hub from STEP 1's table.
-- Fetch the **top articles** from the ranked pool: budget ≤ 6 article fetches. Drop thin or clearly
-  unrelated articles after fetching; target ≤ 5 strong articles going into synthesis.
-- Article URLs always come from the live hub, never guessed → no 404s, always current.
-- If a hub WebFetch fails or returns no links, skip it silently and continue with the others. If ALL
-  three fail (total network issue), fall back to `WebSearch site:help.meritto.com {query}`.
+Treat each hub's output as a **sub-category index, NOT an article list.** Capture every sub-category link
+and any "Popular Articles" the hub happens to show.
 
-**Checkpoint (before STEP 4).** Confirm all three Core-Sweep hubs were fetched (or recorded as failed).
-If you fetched fewer than three, you are NOT done — go back and fetch the rest before synthesizing.
+### Phase B — Sub-category research fan-out (parallel Haiku workers)
 
-**Why all three:** a single feature question often has its setup context in Getting Started, its
-step-by-step in How-To's, and its depth in Product Guide. One hub alone loses the rest. The relevance
-ranking keeps only the genuinely useful articles, so cost stays bounded.
+This is where coverage happens. Dispatch **5-6 `meritto-researcher` subagents in parallel** (one message,
+multiple `Task` calls, `subagent_type: meritto-researcher`, which runs on Haiku). Partition the
+sub-categories gathered in Phase A across the workers (~4-6 sub-categories each) so EVERY sub-category is
+covered — coverage is **exhaustive**, because names do not reveal where a feature lives.
 
-### The five single-home types (no Core Sweep)
+Give each worker: the user's query + its assigned list of sub-category URLs. Each worker opens its
+sub-categories, lists all their articles (cheap), deep-reads the query-relevant ones (≤3 bodies),
+follows central cross-links (depth ≤2, ≤5 bodies total), and returns a **structured linkage map**
+(article URLs, titles, key terms/features, cross-document mentions, relevance notes, gaps). See the
+`meritto-researcher` agent definition for the exact output contract.
 
-Fetch only the one home hub, then go to STEP 4:
+If the runtime cannot spawn subagents (non-Claude-Code host), degrade gracefully: do the same sweep
+**sequentially yourself** — open every sub-category's listing, then deep-read the top-ranked articles
+across all of them (budget ≤8 bodies). Same coverage, just slower.
+
+### Phase C — Merge + rank
+
+Pool every worker's linkage map into ONE network. Dedupe articles by URL. Rank the whole pool by
+relevance to the query, biasing toward the query-type's top-ranked hub from STEP 1. If a worker reported
+a **gap** the query clearly needs, dispatch one follow-up worker (or fetch it yourself) to fill it. The
+main agent (you, on the smart model) does the merging and ranking — Haiku only gathered.
+
+**Checkpoint (before STEP 4).** Confirm: (a) all relevant hubs were fetched, (b) their sub-categories
+were actually opened by the workers (not just the hub pages), and (c) the merged network spans more than
+one sub-category. If coverage stopped at hub pages, STEP 3 was done wrong — go back.
+
+### Phase D — hand to synthesis
+
+Deep-read ≤ ~8 strongest articles total (those the workers flagged but you still need full bodies for),
+then go to the matching sub-step (3F / 3D / 3M / 3O) and STEP 4. STEP 3F and 3D seeds come from the
+merged Phase C network.
+
+### The five single-home types (no full fan-out)
+
+These have one clear home, so they skip the three-hub fan-out — but the **same hub → sub-category →
+article expansion still applies inside their home hub** (open the relevant sub-categories; never stop at
+the hub page):
 - `RELEASE_NEWS` → `…/kb/product-newsletters`
 - `FAQ_TROUBLESHOOT` → `…/kb/faqs-troubleshooting`
 - `BUSINESS_CASE` → `…/kb/solutioning-business-cases`
 - `SECURITY` → `https://www.meritto.com/security/` (+ any KB security articles)
 - `COMPANY_NEWS` → LinkedIn + newsletters (see STEP 5)
 
-Then branch to the matching sub-step below (3F / 3D / 3M / 3O) if applicable — STEP 3F and 3D seeds come
-from the ranked Core-Sweep pool — then go to STEP 4.
+For these, you may dispatch 1-2 `meritto-researcher` workers over the home hub's sub-categories rather
+than the full 5-6.
 
 ### STEP 3F — Feature-Explanation Traversal (FEATURE_EXPLAIN only)
 
-3F is cross-link traversal layered ON TOP of the completed Core Sweep; it never replaces it. If you reach
-3F having fetched only Product Guide, STEP 3 was done wrong — go back and complete the three-hub sweep.
+3F is cross-link traversal layered ON TOP of the completed Sub-Category Sweep (Phases A-C); it never
+replaces the sub-category expansion. If you reach 3F having only opened hub pages, STEP 3 was done wrong —
+go back and run the fan-out.
 
 Assemble the COMPLETE picture across cross-linked articles, then explain. Bounded BFS:
 
-1. Seed = the top-ranked articles from the STEP 3 Core-Sweep pool (Product Guide + Getting Started +
-   How-To's — NOT Product Guide alone).
+1. Seed = the top-ranked articles from the merged Phase C network (spanning the opened sub-categories
+   across all three hubs — NOT the hub pages, and NOT Product Guide alone).
 2. WebFetch each seed. From its body, collect inline links to other `help.meritto.com` KB articles and
    note related module/feature terms that map to other articles.
 3. Enqueue related articles. **Budget: at most 6 articles total, depth at most 2.** Dedupe by URL, skip
@@ -246,8 +281,8 @@ FEATURE_EXPLAIN, run the STEP 3F traversal across BOTH getmio.ai and the KB. Fra
 
 ### STEP 3O — Orientation resolution (ORIENTATION only)
 
-Run the full **Core Sweep** first (Product Guide + Getting Started + How-To's, ranked). The KB's
-Getting Started section usually contains platform-level overview content.
+Run the full **Sub-Category Sweep** first (Product Guide + Getting Started + How-To's, with the Phase B
+fan-out, ranked). The KB's Getting Started section usually contains platform-level overview content.
 
 **Marketing is a last-resort complement only** — use it ONLY if, after the full KB sweep, there is still
 insufficient high-level "what is Meritto / what does it offer" context. If the KB sweep gives you enough,
