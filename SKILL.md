@@ -193,16 +193,23 @@ follows central cross-links (depth ≤2, ≤5 bodies total), and returns a **str
 (article URLs, titles, key terms/features, cross-document mentions, relevance notes, gaps). See the
 `meritto-researcher` agent definition for the exact output contract.
 
+⛔ **SYNCHRONIZATION BARRIER: Do NOT proceed to Phase C until every dispatched worker has returned
+its linkage map.** Count your Task calls at dispatch (N workers launched). Collect exactly N outputs.
+If a worker times out or returns an error, record the failure as a gap (do not retry it) — but still
+wait for all remaining workers before moving on. Starting Phase C with a partial result set is the
+same failure mode as stopping at hub pages — partial coverage produces wrong or missing answers.
+
 If the runtime cannot spawn subagents (non-Claude-Code host), degrade gracefully: do the same sweep
 **sequentially yourself** — open every sub-category's listing, then deep-read the top-ranked articles
 across all of them (budget ≤8 bodies). Same coverage, just slower.
 
 ### Phase C — Merge + rank
 
-Pool every worker's linkage map into ONE network. Dedupe articles by URL. Rank the whole pool by
-relevance to the query, biasing toward the query-type's top-ranked hub from STEP 1. If a worker reported
-a **gap** the query clearly needs, dispatch one follow-up worker (or fetch it yourself) to fill it. The
-main agent (you, on the smart model) does the merging and ranking — Haiku only gathered.
+Pool **all N** linkage maps — you must have N in hand before this step runs (see BARRIER above). Dedupe
+articles by URL. Rank the whole pool by relevance to the query, biasing toward the query-type's
+top-ranked hub from STEP 1. If a worker reported a **gap** the query clearly needs, dispatch one
+follow-up worker (or fetch it yourself) to fill it. The main agent (you, on the smart model) does the
+merging and ranking — Haiku only gathered.
 
 **Checkpoint (before STEP 4).** Confirm: (a) all relevant hubs were fetched, (b) their sub-categories
 were actually opened by the workers (not just the hub pages), and (c) the merged network spans more than
@@ -332,31 +339,175 @@ python3 "${SKILL_DIR}/scripts/meritto_fetch.py" youtube --query "lead allocation
 
 ---
 
-## STEP 6 — Synthesize (docs-concierge voice)
+## STEP 6 — Synthesize (docs-concierge voice, gold standard)
 
-Universal output contract:
-- Line 1 is the badge, verbatim: `🎓 AskMeritto · {YYYY-MM-DD}` (today's date). One blank line, then the
-  answer.
-- **Direct answer first.** Then steps / detail. No preamble, no "Great question".
+### Universal output contract
+- Line 1 is the badge, verbatim: `🎓 AskMeritto · {YYYY-MM-DD}` (today's date). One blank line, then the answer.
+- **Direct answer first** — one sentence that resolves the question before any steps or examples. No preamble, no "Great question".
 - **No em-dashes or en-dashes.** Use ` - ` (hyphen with spaces).
-- **Citations are inline markdown links** `[Article title](url)` to the Meritto source. Never a raw URL,
-  never a trailing "Sources:" dump — EXCEPT FEATURE_EXPLAIN, which ends with its required "Sources used"
-  list.
+- **Citations are inline markdown links** `[Article title](url)` to the Meritto source. Never a raw URL, never a trailing "Sources:" dump — EXCEPT FEATURE_EXPLAIN, which ends with its required "Sources used" list.
 - Ground every claim in fetched content. If the docs don't say who can use a feature, don't guess.
-- Close with 2-3 grounded follow-up suggestions referencing what you actually found.
+- **Use bold `##` section headers** inside the answer to create visual hierarchy — never a wall of bullets.
+- **Include a real-life EdTech CRM scenario** grounded in what you fetched. Scenarios must be plausible for an Indian higher education context: colleges, universities, coaching centres, or school chains. Name a fictional but realistic institution (e.g., "St. Xavier's Institute of Management", "Horizon University", "BrightPath Coaching Centre"). The scenario must reference the actual feature/workflow being explained — never a generic filler example.
+- Close with **2-3 specific follow-up suggestions** that link to what you actually found in the KB (not generic advice). Format: `You might also ask: [topic 1](url) · [topic 2](url) · [topic 3](url)`.
 
-Per-type shapes:
-- **FEATURE_EXPLAIN** → what / who / step-by-step / related features / "Sources used" list (STEP 3F).
-- **HOW_TO / GETTING_STARTED** → numbered steps; link the exact article(s); add a "Watch:" YouTube link if
-  a relevant video was found.
-- **DEVELOPER_API** → endpoint, method + URL, mandatory args, optional args, example curl, example
-  response, error handling / status codes, auth note, portal link (STEP 3D).
-- **MIO_AI** → what it is / capabilities / who it's for (getmio.ai) + how to set it up (KB); metrics
-  attributed to the case study.
-- **ORIENTATION** → the pillar overview, framed as Meritto's own description, KB-led.
-- **PRODUCT_GUIDE / BUSINESS_CASE / FAQ / SECURITY** → concise answer + article link(s).
-- **RELEASE_NEWS / COMPANY_NEWS** → a "What's new" summary; date-stamp items; mark LinkedIn items as
-  supplementary if they came from the WebSearch fallback.
+### Per-type gold shapes
+
+**FEATURE_EXPLAIN**
+```
+## What it is
+<one-paragraph explanation grounded in the KB article>
+
+## Real-life scenario
+<3-5 sentences. Name an Indian EdTech institution. Show the problem this feature solves and
+the outcome after enabling it. E.g.: "Sunrise Engineering College was manually routing 800
+monthly leads across 12 counsellors by checking a shared spreadsheet...">
+
+## Who can use it
+<roles / permissions / plan tier — only if the articles state it; never invent>
+
+## How to enable / use it
+<numbered steps from the articles>
+
+## Related features
+<cross-linked features you found, as inline links>
+
+## Sources used
+<every article URL you read, as inline links — required for FEATURE_EXPLAIN>
+```
+
+**HOW_TO / GETTING_STARTED**
+```
+## What you'll achieve
+<one-line outcome — e.g., "Leads from all sources auto-assigned to the right counsellor, zero manual sorting.">
+
+## Steps
+<numbered steps; add sub-bullets if a step has conditional paths>
+
+## Example
+<EdTech scenario showing the exact workflow in action. 3-5 sentences. Name the institution,
+the volume/context, and the before/after. E.g.: "At Greenfield Institute, the admissions team
+handles 600 leads/month from four sources...">
+
+## Watch
+<YouTube link if a relevant video was found — label it with the video title>
+```
+
+**DEVELOPER_API**
+```
+## Endpoint
+<name and one-line purpose>
+
+| | |
+|---|---|
+| Method | GET / POST / PUT |
+| URL | https://api.nopaperforms.io/... |
+| Auth | Bearer token (see Auth section) |
+
+## Parameters
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| ... | Yes/No | string/int | ... |
+
+## Example request
+<Full curl with realistic EdTech data — e.g., a lead from "Delhi Public School" with name,
+phone, program of interest>
+
+## Example response
+<annotated JSON — add inline comments explaining key fields>
+
+## Error codes
+<table or bullets from the Overview Error Handling doc>
+
+## Auth note
+<from Overview > Auth>
+
+[Open full API reference](https://developer.nopaperforms.com/)
+```
+
+**MIO_AI**
+```
+## What [Mio AI Voice / Guide / Coach] is
+<from getmio.ai — what it is, not marketing claims>
+
+## Real-world use case
+<EdTech scenario. E.g.: "At Horizon University with 10,000 students, Mio AI Voice handled
+300 inbound counselling queries per day during the June admissions peak...">
+
+## Capabilities
+<bullet list from getmio.ai>
+
+## Who it's for
+<roles / institution types stated in the source>
+
+## How to set it up
+<numbered steps from the KB Mio AI articles>
+```
+
+**ORIENTATION**
+```
+## Meritto at a glance
+<one-paragraph KB-led summary, framed as Meritto's own positioning>
+
+## The three pillars
+<Admissions, Communication, Analytics — or whatever the KB getting-started section names,
+with one-line descriptions and KB links>
+
+## Example institution profile
+<a fictional but realistic Indian university using Meritto's full stack — show which modules
+they use and for what. 4-6 sentences.>
+
+## Where to start
+<2-3 KB links most relevant to the user's context>
+```
+
+**PRODUCT_GUIDE / BUSINESS_CASE / FAQ / SECURITY**
+```
+<direct answer — one or two paragraphs>
+
+## In practice
+<one realistic EdTech sentence showing the feature/answer applied — e.g., "A university
+running NIRF rankings found this setting useful because...">
+
+[Source article](url)  [Related article](url)
+```
+
+**RELEASE_NEWS / COMPANY_NEWS**
+```
+## What's new — [Month Year]
+- **[Feature name]** (released [date]) — <one sentence what it does>
+- ...
+
+## Impact for your team
+- [Feature name] — for admissions teams: you can now...
+- [Feature name] — for counsellors: ...
+
+<YouTube / LinkedIn items attributed. Mark LinkedIn WebSearch results as "via LinkedIn (public post — may be partial)">.
+```
+
+### Quality reference example (HOW_TO — "How do I set up lead allocation?")
+
+> 🎓 AskMeritto · 2026-06-21
+>
+> Lead allocation in Meritto CRM automatically assigns incoming enquiries to the right counsellor based on rules you define - no manual sorting required.
+>
+> ## What you'll achieve
+> Leads from every source routed to the correct counsellor instantly, with no admissions coordinator in the loop.
+>
+> ## Steps
+> 1. Go to **Settings > Lead Management > Allocation Rules**.
+> 2. Click **Add Rule** and choose your allocation type: Round Robin, Fixed, or Branch-wise.
+> 3. Set the criteria (source, program, branch) and assign the counsellor pool.
+> 4. Set rule priority if multiple rules could match the same lead.
+> 5. Save and test with a dummy lead to confirm routing.
+>
+> ## Example
+> St. Ignatius College of Commerce receives leads from three channels: website enquiry form, education fair registrations, and a third-party aggregator. Before allocation rules, two admissions coordinators spent 2 hours each morning sorting leads in a shared spreadsheet. After setting up three rules - one per source, each routing to a dedicated counsellor team with Round Robin within the team - new leads are assigned within seconds. Fair registrations go straight to senior counsellors; aggregator leads to the conversion specialist team.
+>
+> ## Watch
+> [Lead Allocation Setup - Meritto CRM](https://youtube.com/...) - 4 min walkthrough
+>
+> You might also ask: [How do auto-reassignment rules work?](url) · [How do I track lead sources?](url) · [How does duplicate detection work at allocation?](url)
 
 ---
 
