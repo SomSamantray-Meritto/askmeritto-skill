@@ -100,25 +100,31 @@ Pick one:
 `MIO_AI` (anything about Mio AI Guide/Voice/Coach) · `PRODUCT_GUIDE` · `RELEASE_NEWS` ·
 `FAQ_TROUBLESHOOT` · `SECURITY` · `BUSINESS_CASE` · `DEVELOPER_API` · `COMPANY_NEWS`
 
-Routing (which sources to hit; resolved in STEP 3):
+**Disambiguation:** questions about webhooks, connectors, automations, or integration *concepts*
+("types of webhook triggers", "how do automations work") are `FEATURE_EXPLAIN`. Reserve `DEVELOPER_API`
+for explicit endpoint / curl / parameter questions. Note that `DEVELOPER_API` ALSO runs the Core Sweep
+(below), so KB how-tos are never lost either way.
 
-| Query type | Primary KB hub(s) (Pass 1) | Supplementary |
-|------------|---------------------------|---------------|
-| ORIENTATION | KB getting-started (all hubs via Multi-Hub Sweep) | getmio.ai for the AI pillar; marketing as last-resort complement only if KB insufficient |
-| GETTING_STARTED | KB getting-started | YouTube |
-| HOW_TO | KB how-to-s + product-guide | YouTube |
-| FEATURE_EXPLAIN | KB product-guide + traversal (STEP 3F) | YouTube |
-| MIO_AI | getmio.ai + KB Mio AI articles | YouTube |
-| PRODUCT_GUIDE | KB product-guide | — |
-| RELEASE_NEWS | KB product-newsletters | YouTube, LinkedIn |
-| FAQ_TROUBLESHOOT | KB faqs-troubleshooting | — |
-| SECURITY | meritto.com/security | KB security articles |
-| BUSINESS_CASE | KB solutioning-business-cases | YouTube |
-| DEVELOPER_API | Postman MCP collection | KB integration articles |
-| COMPANY_NEWS | LinkedIn + newsletters | YouTube, WebSearch |
+**THE CORE SWEEP RULE (read before the table).** For every query type EXCEPT `RELEASE_NEWS`,
+`FAQ_TROUBLESHOOT`, `SECURITY`, `BUSINESS_CASE`, and `COMPANY_NEWS`, STEP 3 ALWAYS sweeps three KB hubs —
+**Product Guide, Getting Started, and How-To's** — regardless of the table below. The table's hub column
+only decides which of the three ranks **highest**; it never limits which hubs are fetched. The five listed
+types instead use their single home hub (no Core Sweep).
 
-**Note:** DEVELOPER_API, SECURITY, MIO_AI, and COMPANY_NEWS skip the Multi-Hub Sweep (they have dedicated
-source paths). All other query types run the full Multi-Hub KB Sweep in STEP 3.
+| Query type | Core 3-hub sweep? | Top-ranked hub (ranking bias only) | Plus dedicated / supplementary |
+|------------|-------------------|------------------------------------|-------------------------------|
+| ORIENTATION | YES | getting-started | getmio.ai for the AI pillar; marketing only if KB insufficient |
+| GETTING_STARTED | YES | getting-started | YouTube |
+| HOW_TO | YES | how-to-s | YouTube |
+| FEATURE_EXPLAIN | YES | product-guide | + 3F cross-link traversal; YouTube |
+| PRODUCT_GUIDE | YES | product-guide | — |
+| MIO_AI | YES | product-guide | + getmio.ai (authoritative for what/who) |
+| DEVELOPER_API | YES | how-to-s | + Postman MCP (authoritative for endpoint detail) |
+| RELEASE_NEWS | NO — newsletters home | — | YouTube, LinkedIn |
+| FAQ_TROUBLESHOOT | NO — faqs home | — | — |
+| SECURITY | NO — security page home | — | KB security articles |
+| BUSINESS_CASE | NO — business-cases home | — | YouTube |
+| COMPANY_NEWS | NO — LinkedIn + newsletters home | — | YouTube, WebSearch |
 
 ---
 
@@ -141,56 +147,62 @@ M3 / M4 → clarify or normalize first. M2 / M5 → reroute the answer source. O
 
 ---
 
-## STEP 3 — Source / Link Resolution: Multi-Hub KB Sweep
+## STEP 3 — Source / Link Resolution: the Core Sweep
 
-Google does NOT index the Meritto KB. Do NOT rely on WebSearch to find KB articles. Use the
-**Multi-Hub KB Sweep** to search exhaustively across all KB categories before arriving at an answer.
+Google does NOT index the Meritto KB. Do NOT rely on WebSearch to find KB articles. Resolve by walking
+the KB live.
 
-Skip to the dedicated sub-step for: DEVELOPER_API (→ STEP 3D), SECURITY (WebFetch direct), MIO_AI
-(→ STEP 3M), COMPANY_NEWS (LinkedIn + newsletters). For all other query types, run the full sweep below.
+**HARD RULE.** Unless the query is `RELEASE_NEWS`, `FAQ_TROUBLESHOOT`, `SECURITY`, `BUSINESS_CASE`, or
+`COMPANY_NEWS`, you MUST WebFetch all THREE Core-Sweep hubs below **before** you rank or fetch any
+article. Fetching only Product Guide and stopping is the single most common failure of this skill — do
+NOT do it. Track the three as a checklist and tick each one.
 
-### Multi-Hub KB Sweep (ORIENTATION, GETTING_STARTED, HOW_TO, FEATURE_EXPLAIN, PRODUCT_GUIDE, RELEASE_NEWS, FAQ_TROUBLESHOOT, BUSINESS_CASE)
+### The Core Sweep (all other query types)
 
-**Pass 1 — Query-specific hubs** (from the routing table above, same as before):
-WebFetch the 1-2 hubs most directly matched to the query type. Collect all candidate article links.
+WebFetch all three of these hubs, every time:
 
-**Pass 2 — Broadening hubs** (ALWAYS run, in addition to Pass 1):
-WebFetch every remaining KB hub that was NOT already covered in Pass 1:
+1. `https://help.meritto.com/portal/en/kb/product-guide`
+2. `https://help.meritto.com/portal/en/kb/getting-started`
+3. `https://help.meritto.com/portal/en/kb/how-to-s`
 
-| Hub | URL | Why it matters |
-|-----|-----|----------------|
-| Getting Started | `/portal/en/kb/getting-started` | setup context, onboarding steps |
-| Product Guide | `/portal/en/kb/product-guide` | feature depth and module docs |
-| How-To's | `/portal/en/kb/how-to-s` | step-by-step task instructions |
-| FAQs / Troubleshooting | `/portal/en/kb/faqs-troubleshooting` | gotchas, edge cases, common errors |
-| Solutioning & Business Cases | `/portal/en/kb/solutioning-business-cases` | why/when context, use cases |
-| Product Newsletters | `/portal/en/kb/product-newsletters` | recent feature changes and releases |
-
-Prefix all paths with `https://help.meritto.com`.
-
-**Execution rules:**
-- WebFetch all hubs in Pass 1 and Pass 2 (up to 6 hub fetches total for the full sweep).
-- If a hub WebFetch fails or returns no links, skip it silently — do not abort the sweep.
-- Collect ALL candidate article URLs across all hubs into one unified pool.
-- Rank the entire pool by relevance to the question (title + snippet match).
-- Fetch the **top articles** from the ranked pool: budget ≤ 8 article fetches total. After fetching,
-  drop thin or clearly unrelated articles. Target ≤ 6 strong articles going into synthesis.
+Then:
+- Collect ALL candidate article URLs from all three hubs into one unified pool.
+- Rank the whole pool by relevance to the question (title + snippet match), biasing toward the
+  query-type's top-ranked hub from STEP 1's table.
+- Fetch the **top articles** from the ranked pool: budget ≤ 6 article fetches. Drop thin or clearly
+  unrelated articles after fetching; target ≤ 5 strong articles going into synthesis.
 - Article URLs always come from the live hub, never guessed → no 404s, always current.
-- Fallback: if EVERY hub fails (total network issue), use `WebSearch site:help.meritto.com {query}`.
+- If a hub WebFetch fails or returns no links, skip it silently and continue with the others. If ALL
+  three fail (total network issue), fall back to `WebSearch site:help.meritto.com {query}`.
 
-**Why this matters:** A question about a feature can have setup context in Getting Started, step-by-step
-instructions in How-To's, deep-dive in Product Guide, gotchas in FAQs, and recent changes in Newsletters.
-Searching only the "primary" hub misses all of this. The sweep catches it all; the relevance ranking
-ensures only the genuinely useful articles get fetched, keeping token cost bounded.
+**Checkpoint (before STEP 4).** Confirm all three Core-Sweep hubs were fetched (or recorded as failed).
+If you fetched fewer than three, you are NOT done — go back and fetch the rest before synthesizing.
 
-Then branch to the matching sub-step below (3F / 3D / 3M / 3O) if applicable — STEP 3F seeds come from
-the ranked multi-hub pool — then go to STEP 4.
+**Why all three:** a single feature question often has its setup context in Getting Started, its
+step-by-step in How-To's, and its depth in Product Guide. One hub alone loses the rest. The relevance
+ranking keeps only the genuinely useful articles, so cost stays bounded.
+
+### The five single-home types (no Core Sweep)
+
+Fetch only the one home hub, then go to STEP 4:
+- `RELEASE_NEWS` → `…/kb/product-newsletters`
+- `FAQ_TROUBLESHOOT` → `…/kb/faqs-troubleshooting`
+- `BUSINESS_CASE` → `…/kb/solutioning-business-cases`
+- `SECURITY` → `https://www.meritto.com/security/` (+ any KB security articles)
+- `COMPANY_NEWS` → LinkedIn + newsletters (see STEP 5)
+
+Then branch to the matching sub-step below (3F / 3D / 3M / 3O) if applicable — STEP 3F and 3D seeds come
+from the ranked Core-Sweep pool — then go to STEP 4.
 
 ### STEP 3F — Feature-Explanation Traversal (FEATURE_EXPLAIN only)
 
+3F is cross-link traversal layered ON TOP of the completed Core Sweep; it never replaces it. If you reach
+3F having fetched only Product Guide, STEP 3 was done wrong — go back and complete the three-hub sweep.
+
 Assemble the COMPLETE picture across cross-linked articles, then explain. Bounded BFS:
 
-1. Seed = the best-match product-guide / how-to article(s) from STEP 3.
+1. Seed = the top-ranked articles from the STEP 3 Core-Sweep pool (Product Guide + Getting Started +
+   How-To's — NOT Product Guide alone).
 2. WebFetch each seed. From its body, collect inline links to other `help.meritto.com` KB articles and
    note related module/feature terms that map to other articles.
 3. Enqueue related articles. **Budget: at most 6 articles total, depth at most 2.** Dedupe by URL, skip
@@ -234,7 +246,7 @@ FEATURE_EXPLAIN, run the STEP 3F traversal across BOTH getmio.ai and the KB. Fra
 
 ### STEP 3O — Orientation resolution (ORIENTATION only)
 
-Run the full **Multi-Hub KB Sweep** first (all 6 KB hubs, ranked, ≤8 article fetches). The KB's
+Run the full **Core Sweep** first (Product Guide + Getting Started + How-To's, ranked). The KB's
 Getting Started section usually contains platform-level overview content.
 
 **Marketing is a last-resort complement only** — use it ONLY if, after the full KB sweep, there is still
