@@ -46,9 +46,13 @@ Guard and STEP 2 Trap check) pass.
 | 11 | Mio AI | https://getmio.ai/ | WebFetch |
 | 12 | Marketing (orientation ONLY, filtered) | https://www.meritto.com/ (page-sitemap.xml) | WebFetch, with exclusions |
 
-**Authority order (higher wins on any conflict):** KB article = Postman API collection > getmio.ai (for
-Mio AI) > YouTube transcript > newsletter > marketing pages (orientation only) > LinkedIn / WebSearch.
-Marketing pages NEVER override the KB and are NEVER used for how-to or comparison answers.
+**Authority order (higher wins on any conflict):**
+KB article = Postman API collection (1.0) > getmio.ai for Mio AI (0.9) > YouTube transcript (0.7) >
+Newsletter (0.6) > LinkedIn / WebSearch (0.4) > Marketing pages — complement only, never primary (0.2).
+
+Marketing pages NEVER override the KB, are NEVER a primary source for any query type, and are only
+touched when ALL KB hubs have been searched and the content is still insufficient. When used, they are
+purely complementary filler, always claims-framed ("Meritto describes…").
 
 The full source policy (exclusions, framing rules) lives in `references/source-policy.md`. Read it the
 first time you touch marketing source #12.
@@ -98,12 +102,12 @@ Pick one:
 
 Routing (which sources to hit; resolved in STEP 3):
 
-| Query type | Primary | Supplementary |
-|------------|---------|---------------|
-| ORIENTATION | KB getting-started + marketing (filtered) | getmio.ai for the AI pillar |
+| Query type | Primary KB hub(s) (Pass 1) | Supplementary |
+|------------|---------------------------|---------------|
+| ORIENTATION | KB getting-started (all hubs via Multi-Hub Sweep) | getmio.ai for the AI pillar; marketing as last-resort complement only if KB insufficient |
 | GETTING_STARTED | KB getting-started | YouTube |
-| HOW_TO | KB how-to-s + product-guide module | YouTube |
-| FEATURE_EXPLAIN | KB product-guide + traversal (STEP 3F) | YouTube, getting-started |
+| HOW_TO | KB how-to-s + product-guide | YouTube |
+| FEATURE_EXPLAIN | KB product-guide + traversal (STEP 3F) | YouTube |
 | MIO_AI | getmio.ai + KB Mio AI articles | YouTube |
 | PRODUCT_GUIDE | KB product-guide | — |
 | RELEASE_NEWS | KB product-newsletters | YouTube, LinkedIn |
@@ -112,6 +116,9 @@ Routing (which sources to hit; resolved in STEP 3):
 | BUSINESS_CASE | KB solutioning-business-cases | YouTube |
 | DEVELOPER_API | Postman MCP collection | KB integration articles |
 | COMPANY_NEWS | LinkedIn + newsletters | YouTube, WebSearch |
+
+**Note:** DEVELOPER_API, SECURITY, MIO_AI, and COMPANY_NEWS skip the Multi-Hub Sweep (they have dedicated
+source paths). All other query types run the full Multi-Hub KB Sweep in STEP 3.
 
 ---
 
@@ -134,23 +141,50 @@ M3 / M4 → clarify or normalize first. M2 / M5 → reroute the answer source. O
 
 ---
 
-## STEP 3 — Source / Link Resolution ("which links to go after")
+## STEP 3 — Source / Link Resolution: Multi-Hub KB Sweep
 
-Google does NOT index the Meritto KB, so do NOT rely on WebSearch to find KB articles. Resolve by
-**tree-walk**:
+Google does NOT index the Meritto KB. Do NOT rely on WebSearch to find KB articles. Use the
+**Multi-Hub KB Sweep** to search exhaustively across all KB categories before arriving at an answer.
 
-1. Map the query type → the KB category hub(s). `references/kb-map.md` has the category list and known
-   high-value article slugs to seed from.
-2. WebFetch the chosen hub(s). The hub returns a list of article links (pattern
-   `/portal/en/kb/articles/{slug}` or `/portal/en/kb/{category}/{sub}`).
-3. Rank the candidate article links by how well their titles match the question. Pick the top 1-3
-   (FEATURE_EXPLAIN may take more — see STEP 3F).
-4. Decide supplementary sources per the routing table.
+Skip to the dedicated sub-step for: DEVELOPER_API (→ STEP 3D), SECURITY (WebFetch direct), MIO_AI
+(→ STEP 3M), COMPANY_NEWS (LinkedIn + newsletters). For all other query types, run the full sweep below.
 
-Article URLs always come from the live hub, never guessed. If a hub fetch fails, fall back to
-`WebSearch site:help.meritto.com {query}`.
+### Multi-Hub KB Sweep (ORIENTATION, GETTING_STARTED, HOW_TO, FEATURE_EXPLAIN, PRODUCT_GUIDE, RELEASE_NEWS, FAQ_TROUBLESHOOT, BUSINESS_CASE)
 
-Then branch to the matching sub-step below (3F / 3D / 3M / 3O) if applicable, else go to STEP 4.
+**Pass 1 — Query-specific hubs** (from the routing table above, same as before):
+WebFetch the 1-2 hubs most directly matched to the query type. Collect all candidate article links.
+
+**Pass 2 — Broadening hubs** (ALWAYS run, in addition to Pass 1):
+WebFetch every remaining KB hub that was NOT already covered in Pass 1:
+
+| Hub | URL | Why it matters |
+|-----|-----|----------------|
+| Getting Started | `/portal/en/kb/getting-started` | setup context, onboarding steps |
+| Product Guide | `/portal/en/kb/product-guide` | feature depth and module docs |
+| How-To's | `/portal/en/kb/how-to-s` | step-by-step task instructions |
+| FAQs / Troubleshooting | `/portal/en/kb/faqs-troubleshooting` | gotchas, edge cases, common errors |
+| Solutioning & Business Cases | `/portal/en/kb/solutioning-business-cases` | why/when context, use cases |
+| Product Newsletters | `/portal/en/kb/product-newsletters` | recent feature changes and releases |
+
+Prefix all paths with `https://help.meritto.com`.
+
+**Execution rules:**
+- WebFetch all hubs in Pass 1 and Pass 2 (up to 6 hub fetches total for the full sweep).
+- If a hub WebFetch fails or returns no links, skip it silently — do not abort the sweep.
+- Collect ALL candidate article URLs across all hubs into one unified pool.
+- Rank the entire pool by relevance to the question (title + snippet match).
+- Fetch the **top articles** from the ranked pool: budget ≤ 8 article fetches total. After fetching,
+  drop thin or clearly unrelated articles. Target ≤ 6 strong articles going into synthesis.
+- Article URLs always come from the live hub, never guessed → no 404s, always current.
+- Fallback: if EVERY hub fails (total network issue), use `WebSearch site:help.meritto.com {query}`.
+
+**Why this matters:** A question about a feature can have setup context in Getting Started, step-by-step
+instructions in How-To's, deep-dive in Product Guide, gotchas in FAQs, and recent changes in Newsletters.
+Searching only the "primary" hub misses all of this. The sweep catches it all; the relevance ranking
+ensures only the genuinely useful articles get fetched, keeping token cost bounded.
+
+Then branch to the matching sub-step below (3F / 3D / 3M / 3O) if applicable — STEP 3F seeds come from
+the ranked multi-hub pool — then go to STEP 4.
 
 ### STEP 3F — Feature-Explanation Traversal (FEATURE_EXPLAIN only)
 
@@ -198,23 +232,34 @@ capabilities / who it's for." Supplement with KB Mio AI articles for "how to set
 FEATURE_EXPLAIN, run the STEP 3F traversal across BOTH getmio.ai and the KB. Frame case-study metrics as
 "per Meritto's Christ University case study," never as bare fact.
 
-### STEP 3O — Orientation resolution (ORIENTATION only; controlled marketing use)
+### STEP 3O — Orientation resolution (ORIENTATION only)
 
+Run the full **Multi-Hub KB Sweep** first (all 6 KB hubs, ranked, ≤8 article fetches). The KB's
+Getting Started section usually contains platform-level overview content.
+
+**Marketing is a last-resort complement only** — use it ONLY if, after the full KB sweep, there is still
+insufficient high-level "what is Meritto / what does it offer" context. If the KB sweep gives you enough,
+skip marketing entirely.
+
+If marketing IS needed:
 1. WebFetch `https://www.meritto.com/page-sitemap.xml` as a discovery index.
-2. **Filter the URL list — EXCLUDE:** any `*-vs-*` / `*alternative*` competitor pages (they conflict with
-   the Topic Guard), e-book / lead-gen landing pages, `evolve` / event pages, and policy / terms pages.
-3. Pick 1-2 relevant product or solutions overview pages; WebFetch them.
-4. Lead from KB getting-started where you can. Use marketing pages only for the high-level pillar map,
-   framed as "Meritto describes its platform as…". Never parrot marketing metrics as fact.
+2. **Filter — EXCLUDE strictly:** any `*-vs-*` / `*alternative*` competitor pages, e-book / lead-gen
+   landing pages, `evolve` / event pages, and policy / terms pages. These are never fetched.
+3. Pick at most 1 relevant product/solutions overview page; WebFetch it.
+4. Use marketing content ONLY to fill gaps the KB didn't cover. Frame every marketing claim as
+   "Meritto describes its platform as…". Never parrot marketing metrics as fact. Never let marketing
+   content override or contradict KB content.
 
 ---
 
 ## STEP 4 — Source Plan
 
 Decide which sources you will actually read and in what priority, following the authority order above.
-KB / Postman API are authoritative; getmio.ai is authoritative for Mio AI; YouTube and newsletters are
-supplementary; marketing is orientation-only and claims-framed; LinkedIn / WebSearch are last-resort
-supplements that may be stale. The authoritative source always wins the synthesis.
+KB / Postman API are authoritative (1.0); getmio.ai is authoritative for Mio AI (0.9); YouTube
+transcripts (0.7) and newsletters (0.6) are supplementary; LinkedIn / WebSearch (0.4) are last-resort
+supplements that may be stale; marketing pages (0.2) are complement-only, used only when KB content is
+insufficient, always claims-framed. The authoritative source always wins the synthesis. Marketing never
+overrides KB.
 
 ---
 
