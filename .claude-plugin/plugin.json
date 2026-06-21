@@ -1,0 +1,22 @@
+{
+  "name": "askmeritto",
+  "version": "1.0.0",
+  "description": "Your Meritto guide. Answers questions about Meritto product, features, guides, how-tos, releases, security, developer APIs, Mio AI, and company news from Meritto's own public sources only. Politely declines anything off-topic.",
+  "author": {
+    "name": "Meritto",
+    "url": "https://www.meritto.com"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "meritto",
+    "nopaperforms",
+    "mio-ai",
+    "edtech",
+    "admissions",
+    "enrollment",
+    "crm",
+    "product-help",
+    "developer-api",
+    "release-notes"
+  ]
+}
