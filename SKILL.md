@@ -182,16 +182,32 @@ and any "Popular Articles" the hub happens to show.
 
 ### Phase B — Sub-category research fan-out (parallel Haiku workers)
 
-This is where coverage happens. Dispatch **5-6 `meritto-researcher` subagents in parallel** (one message,
-multiple `Task` calls, `subagent_type: meritto-researcher`, which runs on Haiku). Partition the
-sub-categories gathered in Phase A across the workers (~4-6 sub-categories each) so EVERY sub-category is
-covered — coverage is **exhaustive**, because names do not reveal where a feature lives.
+This is where coverage happens. Before dispatching, determine worker count from the query complexity:
+
+**Worker count rule (evaluate once, before any Task calls):**
+- **3 workers** — narrow, single-feature queries: `HOW_TO`, `FAQ_TROUBLESHOOT`, `SECURITY`, `GETTING_STARTED`
+- **4 workers** — mid-complexity queries: `FEATURE_EXPLAIN`, `PRODUCT_GUIDE`, `MIO_AI`, `DEVELOPER_API`
+- **5-6 workers** — broad or cross-cutting queries: `ORIENTATION`, `BUSINESS_CASE`, `RELEASE_NEWS`,
+  `COMPANY_NEWS`, or any query spanning 3+ modules/features. Use 6 when sub-category count is high.
+
+This rule applies only to the full three-hub sweep. Single-home types stay at 1-2 workers (see below).
+
+**Sub-category partition sizes:**
+- 3 workers → ~6-8 sub-categories each
+- 4 workers → ~4-6 sub-categories each
+- 5 workers → ~4-5 sub-categories each
+- 6 workers → ~3-4 sub-categories each
+
+Dispatch exactly that many `meritto-researcher` subagents in parallel (one message, multiple `Task`
+calls, `subagent_type: meritto-researcher`, which runs on Haiku). Partition the sub-categories
+gathered in Phase A across the workers so EVERY sub-category is covered — coverage is **exhaustive**,
+because names do not reveal where a feature lives.
 
 Give each worker: the user's query + its assigned list of sub-category URLs. Each worker opens its
 sub-categories, lists all their articles (cheap), deep-reads the query-relevant ones (≤3 bodies),
 follows central cross-links (depth ≤2, ≤5 bodies total), and returns a **structured linkage map**
-(article URLs, titles, key terms/features, cross-document mentions, relevance notes, gaps). See the
-`meritto-researcher` agent definition for the exact output contract.
+(article URLs, titles, hub tags, key terms/features, cross-document mentions, relevance notes, gaps).
+See the `meritto-researcher` agent definition for the exact output contract.
 
 ⛔ **SYNCHRONIZATION BARRIER: Do NOT proceed to Phase C until every dispatched worker has returned
 its linkage map.** Count your Task calls at dispatch (N workers launched). Collect exactly N outputs.
@@ -233,7 +249,7 @@ the hub page):
 - `COMPANY_NEWS` → LinkedIn + newsletters (see STEP 5)
 
 For these, you may dispatch 1-2 `meritto-researcher` workers over the home hub's sub-categories rather
-than the full 5-6.
+than the full 3-6.
 
 ### STEP 3F — Feature-Explanation Traversal (FEATURE_EXPLAIN only)
 
@@ -342,8 +358,20 @@ python3 "${SKILL_DIR}/scripts/meritto_fetch.py" youtube --query "lead allocation
 ## STEP 6 — Synthesize (docs-concierge voice, gold standard)
 
 ### Universal output contract
-- Line 1 is the badge, verbatim: `🎓 AskMeritto · {YYYY-MM-DD}` (today's date). One blank line, then the answer.
+- Line 1 is the badge, verbatim: `🎓 AskMeritto · {YYYY-MM-DD}` (today's date). One blank line, then the headline.
+- **Descriptive headline** — Line 2 is a `## ` headline in plain English describing what the answer
+  covers. It should be specific and action-oriented — e.g., `## How Lead Allocation Works in Meritto CRM`
+  or `## Setting Up Mio AI Voice for Inbound Calls`. Never vague (`## Answer`, `## Overview`). Not a
+  restatement of the user's question. One blank line after the headline, then the direct answer.
 - **Direct answer first** — one sentence that resolves the question before any steps or examples. No preamble, no "Great question".
+- **Plain English voice** — write for a first-time Meritto user, not an internal engineer. Never use
+  process-internal terms in answers: avoid "traversal", "canonical", "authoritative", "fan-out", "hub
+  sweep", "linkage map". Say "the platform" not "the system". Say "this guide" not "this KB article".
+  Say "Meritto's docs" not "the authoritative source".
+- **Examples woven in** — don't save examples only for the scenario block. Where a step has a branching
+  path or meaningful variation, add a brief 1-2 sentence inline example as a sub-bullet or parenthetical.
+  E.g.: `Step 2: Choose your allocation type - for example, Round Robin spreads leads evenly across
+  counsellors, while Fixed always routes a specific source to a specific person.`
 - **No em-dashes or en-dashes.** Use ` - ` (hyphen with spaces).
 - **Citations are inline markdown links** `[Article title](url)` to the Meritto source. Never a raw URL, never a trailing "Sources:" dump — EXCEPT FEATURE_EXPLAIN, which ends with its required "Sources used" list.
 - Ground every claim in fetched content. If the docs don't say who can use a feature, don't guess.
@@ -489,6 +517,8 @@ running NIRF rankings found this setting useful because...">
 
 > 🎓 AskMeritto · 2026-06-21
 >
+> ## How Lead Allocation Works in Meritto CRM
+>
 > Lead allocation in Meritto CRM automatically assigns incoming enquiries to the right counsellor based on rules you define - no manual sorting required.
 >
 > ## What you'll achieve
@@ -511,11 +541,76 @@ running NIRF rankings found this setting useful because...">
 
 ---
 
+## STEP 6F — Agent summary footer
+
+After the follow-up suggestions line (the last line of STEP 6 synthesis), append this visual block as
+the **final thing in your response**, before saving the raw file in STEP 7.
+
+### Footer format
+
+```
+✅ All agents reported back!
+├─ 🟠 Product Guide: [Article A](url) · [Article B](url)
+├─ 🔵 Getting Started: [Article C](url)
+├─ 🟢 How-To's: [Article D](url) · [Article E](url)
+└─ 📎 Raw results saved to ~/Documents/AskMeritto/{slug}-raw.md
+```
+
+### Rules
+
+**Hub lines:** Show one line per hub that was actually swept. Omit hubs that were not dispatched for
+this query (e.g., a FAQ_TROUBLESHOOT query shows only the FAQs hub line). Never show a hub line with
+no articles after the colon.
+
+**Article selection:** Per hub line, show the **2-3 most relevant articles** found by that hub's
+workers — pull from the `high` relevance entries in the merged Phase C article index. If a hub has no
+`high` entries, use `med`. If a hub returned only `low` or nothing relevant, omit the hub line entirely.
+
+**Worker gap/timeout:** If a hub's worker timed out or errored, show `(worker gap — see raw file)`
+instead of article links for that hub.
+
+**Single-home types:** Show only the one home hub line + the save-path line. Example for FAQ:
+```
+✅ All agents reported back!
+├─ 🔴 FAQs & Troubleshooting: [Article X](url) · [Article Y](url)
+└─ 📎 Raw results saved to ~/Documents/AskMeritto/{slug}-raw.md
+```
+
+**FEATURE_EXPLAIN:** The footer appears AFTER the existing required "Sources used" list and after the
+follow-up suggestions — not instead of either.
+
+**No relevant results (edge case):**
+```
+✅ Agents reported back — no high/mid relevance articles surfaced.
+└─ 📎 Raw results saved to ~/Documents/AskMeritto/{slug}-raw.md
+```
+
+**Hub color codes (use exactly these emoji):**
+
+| Emoji | Hub |
+|---|---|
+| 🟠 | Product Guide |
+| 🔵 | Getting Started |
+| 🟢 | How-To's |
+| 🟣 | Business Cases |
+| 🔴 | FAQs & Troubleshooting |
+| 🟡 | Newsletters |
+| 🌐 | Security |
+| 📺 | YouTube |
+| 🔗 | Developer API |
+
+**Footer is display-only.** It is NOT written to the raw file in STEP 7. Save only the synthesized
+answer body and source URLs.
+
+The `{slug}` in the save-path line must match the slug used in STEP 7's file write exactly.
+
+---
+
 ## STEP 7 — Save the raw trail
 
 Append the fetched sources + your answer to `~/Documents/AskMeritto/{slug}-raw.md` (the SessionStart hook
 creates the directory). `{slug}` is a short kebab-case version of the question. This keeps every answer
-auditable back to its Meritto source.
+auditable back to its Meritto source. The agent summary footer (STEP 6F) is **not** written to this file — it is a live-session display only. Save only the synthesized answer body and source URLs.
 
 ---
 
