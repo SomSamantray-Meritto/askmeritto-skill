@@ -169,45 +169,62 @@ the KB live.
 > Smart Capture is inside it — which is exactly why sub-category names are NOT trustworthy filters and
 > coverage must be EXHAUSTIVE.
 
-### Phase A — Hubs (sub-category index)
+### Phase A — Hub inventory (script-first, WebFetch fallback)
 
-WebFetch the relevant hub(s). For the full sweep (all query types except the five single-home types
-below) that is all three:
+For each hub in the sweep, run the fast JSON API script:
+
+```bash
+SKILL_DIR="<absolute path of the directory containing this SKILL.md>"
+python3 "${SKILL_DIR}/scripts/meritto_fetch.py" kb hub-deep <hub-url>
+```
+
+Hub URLs for the full 3-hub Core Sweep:
 1. `https://help.meritto.com/portal/en/kb/product-guide`
 2. `https://help.meritto.com/portal/en/kb/getting-started`
 3. `https://help.meritto.com/portal/en/kb/how-to-s`
 
-Treat each hub's output as a **sub-category index, NOT an article list.** Capture every sub-category link
-and any "Popular Articles" the hub happens to show.
+Single-home hubs (run script with their URL, same command):
+- RELEASE_NEWS: `.../kb/product-newsletters`
+- FAQ_TROUBLESHOOT: `.../kb/faqs-troubleshooting`
+- BUSINESS_CASE: `.../kb/solutioning-business-cases`
 
-### Phase B — Sub-category research fan-out (parallel Haiku workers)
+**If `status=ok` AND `total_articles > 0`:** use `sub_categories[].articles[]` as the full article
+inventory. Each article includes `title`, `url`, `summary` (300-char abstract), `modified` (ISO timestamp).
+For any sub-category with `status=error`: WebFetch that sub-category URL directly as fallback.
 
-This is where coverage happens. Before dispatching, determine worker count from the query complexity:
+**If `status=fetch_error` OR `total_articles=0`:** fall back to WebFetch of the hub URL and treat the
+output as a sub-category index (original behavior). This is the fail-safe — the answer quality degrades
+gracefully without breaking the skill.
 
-**Worker count rule (evaluate once, before any Task calls):**
-- **3 workers** — narrow, single-feature queries: `HOW_TO`, `FAQ_TROUBLESHOOT`, `SECURITY`, `GETTING_STARTED`
-- **4 workers** — mid-complexity queries: `FEATURE_EXPLAIN`, `PRODUCT_GUIDE`, `MIO_AI`, `DEVELOPER_API`
-- **5-6 workers** — broad or cross-cutting queries: `ORIENTATION`, `BUSINESS_CASE`, `RELEASE_NEWS`,
-  `COMPANY_NEWS`, or any query spanning 3+ modules/features. Use 6 when sub-category count is high.
+### Phase B — Pre-ranking + parallel research fan-out
 
-This rule applies only to the full three-hub sweep. Single-home types stay at 1-2 workers (see below).
+**Before dispatching workers**, the main agent uses the Phase A article inventory to do smart pre-work:
 
-**Sub-category partition sizes:**
-- 3 workers → ~6-8 sub-categories each
-- 4 workers → ~4-6 sub-categories each
-- 5 workers → ~4-5 sub-categories each
-- 6 workers → ~3-4 sub-categories each
+1. **Pre-rank all articles** using `title` + `summary` — no body fetches needed for this step. Score HIGH
+   if title or summary keywords strongly match the query; MED for topical overlap; LOW for likely unrelated.
+   For RELEASE_NEWS / "what's new" queries, also sort by `modified` descending (freshness bias).
 
-Dispatch exactly that many `meritto-researcher` subagents in parallel (one message, multiple `Task`
-calls, `subagent_type: meritto-researcher`, which runs on Haiku). Partition the sub-categories
-gathered in Phase A across the workers so EVERY sub-category is covered — coverage is **exhaustive**,
-because names do not reveal where a feature lives.
+2. **Discover cross-hub linkages from summaries** — if article A's summary mentions terms also prominent
+   in article B's summary (from a different hub), flag them as likely linked. Note these pairs when
+   dispatching workers; workers will confirm via body reads.
 
-Give each worker: the user's query + its assigned list of sub-category URLs. Each worker opens its
-sub-categories, lists all their articles (cheap), deep-reads the query-relevant ones (≤3 bodies),
-follows central cross-links (depth ≤2, ≤5 bodies total), and returns a **structured linkage map**
-(article URLs, titles, hub tags, key terms/features, cross-document mentions, relevance notes, gaps).
-See the `meritto-researcher` agent definition for the exact output contract.
+3. **Zero-fetch negative check** — if NO article title or summary contains key terms from the query,
+   report it immediately: "Not found in KB after scanning {N} articles across all hubs." No body fetches
+   wasted. Point to Meritto Helpdesk.
+
+4. **Partition and dispatch** — split ALL articles into 5-6 slices and dispatch **`meritto-researcher`
+   subagents in parallel** (one message, multiple `Task` calls, `subagent_type: meritto-researcher`).
+   Partition by sub-category clusters, keeping related sub-cats together. Coverage is **exhaustive** —
+   every article is assigned to a worker.
+
+**Each worker receives in its prompt:**
+- The user's query
+- Its assigned article slice as a list: `title | url | summary | main_agent_rank (HIGH/MED/LOW)`
+- Sub-category context (which sub-cat each article came from)
+- Any cross-hub linkage pairs you spotted at the summary level
+
+Workers do **NOT** fetch sub-category listing pages — Phase A already did that. Workers jump straight
+to ranking and body reads. See the `meritto-researcher` agent definition for the exact output contract.
 
 ⛔ **SYNCHRONIZATION BARRIER: Do NOT proceed to Phase C until every dispatched worker has returned
 its linkage map.** Count your Task calls at dispatch (N workers launched). Collect exactly N outputs.
@@ -249,7 +266,7 @@ the hub page):
 - `COMPANY_NEWS` → LinkedIn + newsletters (see STEP 5)
 
 For these, you may dispatch 1-2 `meritto-researcher` workers over the home hub's sub-categories rather
-than the full 3-6.
+than the full 5-6.
 
 ### STEP 3F — Feature-Explanation Traversal (FEATURE_EXPLAIN only)
 
@@ -355,254 +372,120 @@ python3 "${SKILL_DIR}/scripts/meritto_fetch.py" youtube --query "lead allocation
 
 ---
 
-## STEP 6 — Synthesize (docs-concierge voice, gold standard)
+## STEP 6 — Synthesize (docs-concierge voice, v10 universal layout)
 
-### Universal output contract
-- Line 1 is the badge, verbatim: `🎓 AskMeritto · {YYYY-MM-DD}` (today's date). One blank line, then the headline.
-- **Descriptive headline** — Line 2 is a `## ` headline in plain English describing what the answer
-  covers. It should be specific and action-oriented — e.g., `## How Lead Allocation Works in Meritto CRM`
-  or `## Setting Up Mio AI Voice for Inbound Calls`. Never vague (`## Answer`, `## Overview`). Not a
-  restatement of the user's question. One blank line after the headline, then the direct answer.
-- **Direct answer first** — one sentence that resolves the question before any steps or examples. No preamble, no "Great question".
-- **Plain English voice** — write for a first-time Meritto user, not an internal engineer. Never use
-  process-internal terms in answers: avoid "traversal", "canonical", "authoritative", "fan-out", "hub
-  sweep", "linkage map". Say "the platform" not "the system". Say "this guide" not "this KB article".
-  Say "Meritto's docs" not "the authoritative source".
-- **Examples woven in** — don't save examples only for the scenario block. Where a step has a branching
-  path or meaningful variation, add a brief 1-2 sentence inline example as a sub-bullet or parenthetical.
-  E.g.: `Step 2: Choose your allocation type - for example, Round Robin spreads leads evenly across
-  counsellors, while Fixed always routes a specific source to a specific person.`
+### Universal rules (apply to every answer type)
+
 - **No em-dashes or en-dashes.** Use ` - ` (hyphen with spaces).
-- **Citations are inline markdown links** `[Article title](url)` to the Meritto source. Never a raw URL, never a trailing "Sources:" dump — EXCEPT FEATURE_EXPLAIN, which ends with its required "Sources used" list.
-- Ground every claim in fetched content. If the docs don't say who can use a feature, don't guess.
-- **Use bold `##` section headers** inside the answer to create visual hierarchy — never a wall of bullets.
-- **Include a real-life EdTech CRM scenario** grounded in what you fetched. Scenarios must be plausible for an Indian higher education context: colleges, universities, coaching centres, or school chains. Name a fictional but realistic institution (e.g., "St. Xavier's Institute of Management", "Horizon University", "BrightPath Coaching Centre"). The scenario must reference the actual feature/workflow being explained — never a generic filler example.
-- Close with **2-3 specific follow-up suggestions** that link to what you actually found in the KB (not generic advice). Format: `You might also ask: [topic 1](url) · [topic 2](url) · [topic 3](url)`.
+- Ground every claim in fetched content. If the docs don't say who can use a feature, omit it — never guess.
+- **Include a real-life EdTech CRM scenario** grounded in what you fetched. Name a fictional but realistic Indian higher education institution (e.g., "St. Xavier's Institute of Management", "Horizon University", "BrightPath Coaching Centre"). The scenario must reference the actual feature/workflow — never a generic filler.
+- Citations are inline markdown links `[Article title](url)`. Never raw URLs.
 
-### Per-type gold shapes
+### Universal output layout
 
-**FEATURE_EXPLAIN**
 ```
-## What it is
-<one-paragraph explanation grounded in the KB article>
+🎓 AskMeritto · {YYYY-MM-DD}
 
-## Real-life scenario
-<3-5 sentences. Name an Indian EdTech institution. Show the problem this feature solves and
-the outcome after enabling it. E.g.: "Sunrise Engineering College was manually routing 800
-monthly leads across 12 counsellors by checking a shared spreadsheet...">
+## {Topic / Feature Name}
+_{One line: what this is, in plain English.}_
 
-## Who can use it
-<roles / permissions / plan tier — only if the articles state it; never invent>
+{Main answer — prose + bullets + numbered steps as the content demands. Bold key terms.
+Use numbered lists for sequential steps, bullets for options/comparisons, short paragraphs for
+explanations. Include an **Example** block (EdTech scenario, named Indian institution, before/after).}
 
-## How to enable / use it
-<numbered steps from the articles>
+---
+### Explore more
+- [{Related article or topic}]({url})
+- [{Related article or topic}]({url})
 
-## Related features
-<cross-linked features you found, as inline links>
+---
+### You might also want to know
+- {Natural follow-up question} → [{article title}]({url})
+- {Another follow-up} → [{article title}]({url})
 
-## Sources used
-<every article URL you read, as inline links — required for FEATURE_EXPLAIN>
-```
-
-**HOW_TO / GETTING_STARTED**
-```
-## What you'll achieve
-<one-line outcome — e.g., "Leads from all sources auto-assigned to the right counsellor, zero manual sorting.">
-
-## Steps
-<numbered steps; add sub-bullets if a step has conditional paths>
-
-## Example
-<EdTech scenario showing the exact workflow in action. 3-5 sentences. Name the institution,
-the volume/context, and the before/after. E.g.: "At Greenfield Institute, the admissions team
-handles 600 leads/month from four sources...">
-
-## Watch
-<YouTube link if a relevant video was found — label it with the video title>
+---
+### Sources
+{one line per source actually used — emoji + type + linked title}
 ```
 
-**DEVELOPER_API**
-```
-## Endpoint
-<name and one-line purpose>
+**"Explore more"** = related KB articles found during research that were not directly used to answer the
+query but are clearly adjacent (from the Phase C cross-linkage map). 2-4 items.
 
-| | |
+**"You might also want to know"** = natural follow-up questions the user likely has next, each linked to
+the specific KB article that answers them. Must be grounded in real articles found — not invented. 2-3 items.
+
+### Source color-ball legend
+
+| Emoji | Source type |
 |---|---|
-| Method | GET / POST / PUT |
-| URL | https://api.nopaperforms.io/... |
-| Auth | Bearer token (see Auth section) |
+| 🟢 | KB (help.meritto.com) |
+| 🟣 | Developer API (Postman / api.nopaperforms.io) |
+| 🟡 | Mio AI (getmio.ai) |
+| 🔵 | YouTube (@merittoofficial) |
+| 🟠 | Newsletter (KB product-newsletters) |
+| 🔴 | LinkedIn / WebSearch (supplementary, may be partial) |
+| ⚪ | Marketing (meritto.com, complementary only, claims-framed) |
 
-## Parameters
-| Parameter | Required | Type | Description |
-|-----------|----------|------|-------------|
-| ... | Yes/No | string/int | ... |
+Show only sources actually used in the answer. One line per source:
+`🟢 KB  [Article title](url)` or `🔵 YouTube  [Video title](url)`
 
-## Example request
-<Full curl with realistic EdTech data — e.g., a lead from "Delhi Public School" with name,
-phone, program of interest>
+### Per-type structural notes (within the universal layout)
 
-## Example response
-<annotated JSON — add inline comments explaining key fields>
+**FEATURE_EXPLAIN** — add a `### Sources used` block (the full list of every article read) before
+"Explore more". This is the one type that requires a complete reference list.
 
-## Error codes
-<table or bullets from the Overview Error Handling doc>
+**HOW_TO / GETTING_STARTED** — main body uses numbered steps. Add a `### Watch` line under the Example
+if a relevant YouTube video was found.
 
-## Auth note
-<from Overview > Auth>
+**DEVELOPER_API** — main body keeps the structured tables (endpoint, parameters, curl, response, error
+codes). Sources section shows 🟣 instead of 🟢 for the API reference.
 
-[Open full API reference](https://developer.nopaperforms.com/)
-```
+**MIO_AI** — main body leads from getmio.ai (what it is, capabilities, who it's for), then KB for setup
+steps. Sources show both 🟡 Mio AI and 🟢 KB.
 
-**MIO_AI**
-```
-## What [Mio AI Voice / Guide / Coach] is
-<from getmio.ai — what it is, not marketing claims>
+**RELEASE_NEWS / COMPANY_NEWS** — main body is a bullet list of what's new, date-stamped per item, with
+an "Impact for your team" sub-section. LinkedIn WebSearch results marked 🔴 (supplementary).
 
-## Real-world use case
-<EdTech scenario. E.g.: "At Horizon University with 10,000 students, Mio AI Voice handled
-300 inbound counselling queries per day during the June admissions peak...">
+**ORIENTATION** — main body covers the three pillars from KB, includes an example institution profile.
 
-## Capabilities
-<bullet list from getmio.ai>
+### Quality reference (HOW_TO — "How do I set up lead allocation?")
 
-## Who it's for
-<roles / institution types stated in the source>
-
-## How to set it up
-<numbered steps from the KB Mio AI articles>
-```
-
-**ORIENTATION**
-```
-## Meritto at a glance
-<one-paragraph KB-led summary, framed as Meritto's own positioning>
-
-## The three pillars
-<Admissions, Communication, Analytics — or whatever the KB getting-started section names,
-with one-line descriptions and KB links>
-
-## Example institution profile
-<a fictional but realistic Indian university using Meritto's full stack — show which modules
-they use and for what. 4-6 sentences.>
-
-## Where to start
-<2-3 KB links most relevant to the user's context>
-```
-
-**PRODUCT_GUIDE / BUSINESS_CASE / FAQ / SECURITY**
-```
-<direct answer — one or two paragraphs>
-
-## In practice
-<one realistic EdTech sentence showing the feature/answer applied — e.g., "A university
-running NIRF rankings found this setting useful because...">
-
-[Source article](url)  [Related article](url)
-```
-
-**RELEASE_NEWS / COMPANY_NEWS**
-```
-## What's new — [Month Year]
-- **[Feature name]** (released [date]) — <one sentence what it does>
-- ...
-
-## Impact for your team
-- [Feature name] — for admissions teams: you can now...
-- [Feature name] — for counsellors: ...
-
-<YouTube / LinkedIn items attributed. Mark LinkedIn WebSearch results as "via LinkedIn (public post — may be partial)">.
-```
-
-### Quality reference example (HOW_TO — "How do I set up lead allocation?")
-
-> 🎓 AskMeritto · 2026-06-21
+> 🎓 AskMeritto · 2026-06-22
 >
-> ## How Lead Allocation Works in Meritto CRM
+> ## Lead Allocation
+> _Automatically route every incoming lead to the right counsellor based on rules you define - no manual sorting._
 >
-> Lead allocation in Meritto CRM automatically assigns incoming enquiries to the right counsellor based on rules you define - no manual sorting required.
->
-> ## What you'll achieve
-> Leads from every source routed to the correct counsellor instantly, with no admissions coordinator in the loop.
+> Lead allocation rules in Meritto CRM let you assign leads by source, program, branch, or any custom
+> criteria. Once set up, every new lead lands directly in the right counsellor's queue within seconds.
 >
 > ## Steps
 > 1. Go to **Settings > Lead Management > Allocation Rules**.
-> 2. Click **Add Rule** and choose your allocation type: Round Robin, Fixed, or Branch-wise.
+> 2. Click **Add Rule** and choose the allocation type: Round Robin, Fixed, or Branch-wise.
 > 3. Set the criteria (source, program, branch) and assign the counsellor pool.
 > 4. Set rule priority if multiple rules could match the same lead.
 > 5. Save and test with a dummy lead to confirm routing.
 >
-> ## Example
-> St. Ignatius College of Commerce receives leads from three channels: website enquiry form, education fair registrations, and a third-party aggregator. Before allocation rules, two admissions coordinators spent 2 hours each morning sorting leads in a shared spreadsheet. After setting up three rules - one per source, each routing to a dedicated counsellor team with Round Robin within the team - new leads are assigned within seconds. Fair registrations go straight to senior counsellors; aggregator leads to the conversion specialist team.
+> **Example**
+> St. Ignatius College of Commerce receives leads from three channels: website enquiry form, education
+> fair registrations, and a third-party aggregator. Before allocation rules, two admissions coordinators
+> spent 2 hours each morning sorting leads in a shared spreadsheet. After setting up three source-based
+> rules - each routing to a dedicated counsellor team with Round Robin within the team - new leads are
+> assigned in seconds. Fair leads go to senior counsellors; aggregator leads to the conversion team.
 >
-> ## Watch
-> [Lead Allocation Setup - Meritto CRM](https://youtube.com/...) - 4 min walkthrough
+> ---
+> ### Explore more
+> - [Auto-reassignment rules - how fallback works when a counsellor is offline](url)
+> - [Lead source tracking - see which channel drives the most leads](url)
 >
-> You might also ask: [How do auto-reassignment rules work?](url) · [How do I track lead sources?](url) · [How does duplicate detection work at allocation?](url)
-
----
-
-## STEP 6F — Agent summary footer
-
-After the follow-up suggestions line (the last line of STEP 6 synthesis), append this visual block as
-the **final thing in your response**, before saving the raw file in STEP 7.
-
-### Footer format
-
-```
-✅ All agents reported back!
-├─ 🟠 Product Guide: [Article A](url) · [Article B](url)
-├─ 🔵 Getting Started: [Article C](url)
-├─ 🟢 How-To's: [Article D](url) · [Article E](url)
-└─ 📎 Raw results saved to ~/Documents/AskMeritto/{slug}-raw.md
-```
-
-### Rules
-
-**Hub lines:** Show one line per hub that was actually swept. Omit hubs that were not dispatched for
-this query (e.g., a FAQ_TROUBLESHOOT query shows only the FAQs hub line). Never show a hub line with
-no articles after the colon.
-
-**Article selection:** Per hub line, show the **2-3 most relevant articles** found by that hub's
-workers — pull from the `high` relevance entries in the merged Phase C article index. If a hub has no
-`high` entries, use `med`. If a hub returned only `low` or nothing relevant, omit the hub line entirely.
-
-**Worker gap/timeout:** If a hub's worker timed out or errored, show `(worker gap — see raw file)`
-instead of article links for that hub.
-
-**Single-home types:** Show only the one home hub line + the save-path line. Example for FAQ:
-```
-✅ All agents reported back!
-├─ 🔴 FAQs & Troubleshooting: [Article X](url) · [Article Y](url)
-└─ 📎 Raw results saved to ~/Documents/AskMeritto/{slug}-raw.md
-```
-
-**FEATURE_EXPLAIN:** The footer appears AFTER the existing required "Sources used" list and after the
-follow-up suggestions — not instead of either.
-
-**No relevant results (edge case):**
-```
-✅ Agents reported back — no high/mid relevance articles surfaced.
-└─ 📎 Raw results saved to ~/Documents/AskMeritto/{slug}-raw.md
-```
-
-**Hub color codes (use exactly these emoji):**
-
-| Emoji | Hub |
-|---|---|
-| 🟠 | Product Guide |
-| 🔵 | Getting Started |
-| 🟢 | How-To's |
-| 🟣 | Business Cases |
-| 🔴 | FAQs & Troubleshooting |
-| 🟡 | Newsletters |
-| 🌐 | Security |
-| 📺 | YouTube |
-| 🔗 | Developer API |
-
-**Footer is display-only.** It is NOT written to the raw file in STEP 7. Save only the synthesized
-answer body and source URLs.
-
-The `{slug}` in the save-path line must match the slug used in STEP 7's file write exactly.
+> ---
+> ### You might also want to know
+> - How do I reassign leads in bulk? → [Bulk Lead Actions](url)
+> - How does duplicate detection work? → [Duplicate Lead Management](url)
+>
+> ---
+> ### Sources
+> 🟢 KB  [Lead Allocation Setup](url)
+> 🟢 KB  [Allocation Rules - Round Robin vs Fixed](url)
 
 ---
 
@@ -610,7 +493,7 @@ The `{slug}` in the save-path line must match the slug used in STEP 7's file wri
 
 Append the fetched sources + your answer to `~/Documents/AskMeritto/{slug}-raw.md` (the SessionStart hook
 creates the directory). `{slug}` is a short kebab-case version of the question. This keeps every answer
-auditable back to its Meritto source. The agent summary footer (STEP 6F) is **not** written to this file — it is a live-session display only. Save only the synthesized answer body and source URLs.
+auditable back to its Meritto source.
 
 ---
 
